@@ -26,18 +26,45 @@ class SyncService
 {
     protected string $remoteConnection = 'mysql_remote';
 
+    public function isDirectMasterMode(): bool
+    {
+        return config('database.default') === 'mysql';
+    }
+
     /**
      * Test if the remote MySQL database is reachable.
      */
     public function testRemoteConnection(): array
     {
+        if ($this->isDirectMasterMode()) {
+            try {
+                DB::connection()->getPdo();
+
+                return [
+                    'connected' => true,
+                    'host' => 'Serveur Central (Production Directe)',
+                    'database' => config('database.connections.mysql.database', 'magasin_db'),
+                    'latency_ms' => 0.1,
+                    'message' => 'Connecté directement à la base de données MySQL de production.',
+                ];
+            } catch (Exception $e) {
+                return [
+                    'connected' => false,
+                    'host' => 'Serveur Central',
+                    'database' => config('database.connections.mysql.database', 'magasin_db'),
+                    'latency_ms' => null,
+                    'message' => 'Erreur de connexion MySQL : '.$e->getMessage(),
+                ];
+            }
+        }
+
         $startTime = microtime(true);
         $host = config("database.connections.{$this->remoteConnection}.host", '127.0.0.1');
         $port = (int) config("database.connections.{$this->remoteConnection}.port", 3306);
         $dbName = config("database.connections.{$this->remoteConnection}.database", 'gestmagasin');
 
-        // Test ultra-rapide du port TCP (0.4s max) pour ne jamais bloquer l'application si MySQL est arrêté
-        $socket = @fsockopen($host, $port, $errno, $errstr, 0.4);
+        $timeout = (float) env('DB_REMOTE_TIMEOUT', 5.0);
+        $socket = @fsockopen($host, $port, $errno, $errstr, $timeout > 0 ? $timeout : 5.0);
         if (! $socket) {
             return [
                 'connected' => false,
@@ -77,6 +104,17 @@ class SyncService
      */
     public function pull(): array
     {
+        if ($this->isDirectMasterMode()) {
+            return [
+                'success' => true,
+                'action' => 'pull',
+                'summary' => [],
+                'duration_seconds' => 0,
+                'message' => 'Vous êtes sur le serveur central de production (Web) : toutes les données sont enregistrées en direct dans MySQL.',
+                'synced_at' => Carbon::now()->format('d/m/Y H:i:s'),
+            ];
+        }
+
         $test = $this->testRemoteConnection();
         if (! $test['connected']) {
             throw new Exception($test['message']);
@@ -291,6 +329,17 @@ class SyncService
      */
     public function push(): array
     {
+        if ($this->isDirectMasterMode()) {
+            return [
+                'success' => true,
+                'action' => 'push',
+                'summary' => [],
+                'duration_seconds' => 0,
+                'message' => 'Vous êtes sur le serveur central de production (Web) : toutes les données sont enregistrées en direct dans MySQL.',
+                'synced_at' => Carbon::now()->format('d/m/Y H:i:s'),
+            ];
+        }
+
         $test = $this->testRemoteConnection();
         if (! $test['connected']) {
             throw new Exception($test['message']);
@@ -783,6 +832,18 @@ class SyncService
      */
     public function syncAll(): array
     {
+        if ($this->isDirectMasterMode()) {
+            return [
+                'success' => true,
+                'action' => 'sync_all',
+                'push' => [],
+                'pull' => [],
+                'duration_seconds' => 0,
+                'message' => 'Vous êtes sur le serveur central de production (Web) : toutes les données sont déjà en temps réel dans MySQL. La synchronisation est réservée aux caisses Desktop.',
+                'synced_at' => Carbon::now()->format('d/m/Y H:i:s'),
+            ];
+        }
+
         $startTime = microtime(true);
         $pushResult = $this->push();
         $pullResult = $this->pull();
